@@ -26,7 +26,7 @@ SLURM 클러스터 환경에서 `.sh` 배치 스크립트를 자동으로 제출
 ## 🚀 사용 방법
 
 ```python
-from slurm_batch_manager import run_batch
+from slurm_manager.utils import run_batch
 
 run_batch(
     script_path="base_script.sh",
