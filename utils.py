@@ -3,6 +3,10 @@ import re
 import time
 import os
 
+def get_current_python_path():
+    import sys
+    return sys.executable
+
 def format_sbatch_options(options_dict):
     """
     주어진 딕셔너리를 #SBATCH 형식 문자열 리스트로 변환합니다.
@@ -162,3 +166,47 @@ def run_batch(script_path, save_dir, sbatch_options=None, max_retries=3, wait_in
             attempt += 1
 
     print("Maximum retry limit exceeded. Job failed.")
+
+def run_batch_with_function(save_dir, sbatch_options, module_name, function_name, function_args=None, python_path=None, max_retries=3, wait_interval=10, verbose=True):
+    """
+    특정 모듈의 함수를 인자와 함께 실행하는 sbatch 스크립트를 생성하고, 
+    기존 run_batch를 호출하여 작업을 제출합니다.
+    
+    Parameters:
+        save_dir (str): 스크립트와 로그를 저장할 디렉토리
+        sbatch_options (dict): sbatch 옵션 딕셔너리
+        module_name (str): 함수를 포함하는 모듈 이름 (예: "my_module")
+        function_name (str): 실행할 함수 이름 (예: "my_function")
+        function_args (dict or None): 함수 인자 (예: {"arg1": 123, "arg2": "'hello'"})
+        python_path (str): 사용할 Python 인터프리터 경로
+        max_retries (int): 최대 재시도 횟수
+        wait_interval (int): 상태 확인 주기 (초)
+        verbose (bool): 상태 출력 여부
+    """
+    if python_path is None:
+        python_path = get_current_python_path()
+        
+    # 저장 디렉토리 생성
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # 함수 인자 문자열 구성
+    if function_args:
+        # 딕셔너리를 "key=value" 문자열로 변환
+        args_str = ", ".join([f"{k}={v}" for k, v in function_args.items()])
+    else:
+        args_str = ""
+
+    # 원본 스크립트 파일 생성 (함수 호출 코드만 포함)
+    original_script_path = os.path.join(save_dir, f"run_{function_name}.sh")
+    with open(original_script_path, "w") as f:
+        f.write("#!/bin/bash\n")
+        # 함수 호출 문자열
+        call_str = f"{function_name}({args_str})"
+        # Python 코드 실행 라인
+        f.write(f"{python_path} -c \"from {module_name} import {function_name}; {call_str}\"\n")
+
+    # 쉘 스크립트가 실행될 수 있도록 실행 권한(755) 부여
+    os.chmod(original_script_path, 0o755)
+
+    # 기존 run_batch 함수를 이용하여 작업 제출 및 모니터링
+    run_batch(original_script_path, save_dir, sbatch_options, max_retries, wait_interval, verbose)

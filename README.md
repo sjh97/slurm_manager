@@ -25,6 +25,7 @@ SLURM 클러스터 환경에서 `.sh` 배치 스크립트를 자동으로 제출
 
 ## 🚀 사용 방법
 
+### 기본 .sh 파일이 있을 때
 ```python
 from slurm_manager.utils import run_batch
 
@@ -42,3 +43,86 @@ run_batch(
     wait_interval=30,
     verbose=True
 )
+```
+
+### 함수를 실행하고 싶을 때 (인자가 없는 경우)
+
+```python
+from slurm_manager.utils import run_batch_with_function
+
+script_path = "backbone.sh"
+
+sbatch_options = {
+    "partition": "all",
+    "job-name": "comsol_job",
+    "time": "10-40:00:00",
+    "nodelist": "node32"
+}
+
+save_dir = "log/test_function"
+
+run_batch_with_function(save_dir=save_dir, 
+                        sbatch_options=sbatch_options, 
+                        module_name="task",
+                        function_name="main",
+                        wait_interval=2,
+                        verbose=True)
+```
+
+### 함수를 실행하고 싶을 때 (인자가 있는 경우)
+
+```python
+from slurm_manager.utils import run_batch_with_function
+
+sbatch_options = {
+    "partition": "all",
+    "job-name": "comsol_job",
+    "time": "10-40:00:00",
+    "nodelist": "node32"
+}
+
+save_dir = "log/test_function_with_args"
+
+function_args = {"path1" : "'task.txt'",
+                 "path2" : "'task.txt'"}
+
+run_batch_with_function(save_dir=save_dir, 
+                        sbatch_options=sbatch_options, 
+                        module_name="task",
+                        function_name="read_txt",
+                        function_args=function_args,
+                        wait_interval=2,
+                        max_retries=1,
+                        verbose=True)
+```
+
+
+### 함수를 실행하고 싶을 때 (Python path 설정)
+
+```python
+from slurm_manager.utils import run_batch_with_function
+
+sbatch_options = {
+    "partition": "all",
+    "job-name": "comsol_job",
+    "time": "10-40:00:00",
+    "nodelist": "node32"
+}
+
+save_dir = "log/test_function_with_args_python_path"
+
+function_args = {"path1" : "'task.txt'",
+                 "path2" : "'task.txt'"}
+
+python_path = "your python path"
+
+run_batch_with_function(save_dir=save_dir, 
+                        sbatch_options=sbatch_options, 
+                        module_name="task",
+                        function_name="read_txt",
+                        function_args=function_args,
+                        python_path=python_path,
+                        wait_interval=2,
+                        max_retries=1,
+                        verbose=True)
+```
