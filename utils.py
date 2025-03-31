@@ -54,8 +54,9 @@ def is_job_running(job_id):
     Returns:
         bool: 실행 중이면 True, 아니면 False
     """
-    result = subprocess.run(["squeue", "--job", job_id], capture_output=True, text=True)
-    return job_id in result.stdout
+    base_job_id = job_id.split('_')[0] if '_' in job_id else job_id
+    result = subprocess.run(["squeue", "--job", base_job_id], capture_output=True, text=True)
+    return base_job_id in result.stdout
 
 def get_job_status(job_id):
     """
@@ -67,17 +68,32 @@ def get_job_status(job_id):
     Returns:
         str or None: 작업 상태(COMPLETED, FAILED 등), 찾을 수 없으면 None
     """
+    # 배열 작업일 경우 "12345_0"처럼 표시되므로 기본 job id를 추출
+    base_job_id = job_id.split('_')[0] if '_' in job_id else job_id
+
     result = subprocess.run(
-        ["sacct", "-j", job_id, "--format=JobID,State", "--parsable2", "--noheader"],
+        ["sacct", "-j", base_job_id, "--format=JobID,State", "--parsable2", "--noheader"],
         capture_output=True,
         text=True
     )
     lines = result.stdout.strip().splitlines()
+    states = set()
     for line in lines:
         parts = line.split('|')
-        if parts[0] == job_id:
-            return parts[1]
-    return None
+        # 배열 작업의 모든 태스크 상태를 수집 (예: 12345_0, 12345_1, …)
+        if parts[0].startswith(base_job_id):
+            states.add(parts[1])
+    
+    if not states:
+        return None
+    # 모든 태스크가 COMPLETED이면 COMPLETED 반환
+    if all(state == "COMPLETED" for state in states):
+        return "COMPLETED"
+    # 모든 태스크가 FAILED이면 FAILED 반환
+    if all(state == "FAILED" for state in states):
+        return "FAILED"
+    # 그 외 여러 상태가 섞여 있다면, 상태들을 콤마로 구분하여 반환
+    return ",".join(states)
 
 def generate_sh_with_options(original_script, output_path, options_dict, run_args=None):
     """
@@ -110,10 +126,10 @@ def generate_sh_with_options(original_script, output_path, options_dict, run_arg
     # 실행 인자 추가
     if run_args:
         args_str = " ".join([f"--{key} {value}" for key, value in run_args.items()])
-        run_command = f"{body_lines[-1].strip()} {args_str}\n"
     else:
-        run_command = ""
-
+        args_str = ""
+        
+    run_command = f"{body_lines[-1].strip()} {args_str}\n"
     # 최종 구성
     with open(output_path, 'w') as f:
         f.writelines(new_lines)
@@ -233,9 +249,16 @@ def run_batch_with_function(save_dir,
         f.write("#!/bin/bash\n")
         # Python 코드 실행 라인
         f.write(f"{python_path} -c \"{call_str}\"\n")
+        print(f"{python_path} -c \"{call_str}\"\n")
+        print(f"Original script created at {original_script_path}")
 
     # 쉘 스크립트가 실행될 수 있도록 실행 권한(755) 부여
     os.chmod(original_script_path, 0o755)
 
     # 기존 run_batch 함수를 이용하여 작업 제출 및 모니터링
-    run_batch(original_script_path, save_dir, sbatch_options, max_retries, wait_interval, verbose)
+    run_batch(script_path=original_script_path, 
+              save_dir=save_dir, 
+              sbatch_options=sbatch_options, 
+              max_retries=max_retries, 
+              wait_interval=wait_interval, 
+              verbose=verbose)
