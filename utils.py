@@ -79,7 +79,7 @@ def get_job_status(job_id):
             return parts[1]
     return None
 
-def generate_sh_with_options(original_script, output_path, options_dict):
+def generate_sh_with_options(original_script, output_path, options_dict, run_args=None):
     """
     sbatch 옵션을 포함한 새로운 .sh 스크립트를 생성
     
@@ -87,6 +87,7 @@ def generate_sh_with_options(original_script, output_path, options_dict):
         original_script (str): 기존 .sh 경로
         output_path (str): 생성될 .sh 경로
         options_dict (dict): sbatch 옵션들
+        run_args (dict or None): 실행 인자들
     """
     with open(original_script, 'r') as f:
         original_lines = f.readlines()
@@ -105,6 +106,13 @@ def generate_sh_with_options(original_script, output_path, options_dict):
     # 나머지 스크립트 본문 추가
     start_idx = len(new_lines)
     body_lines = original_lines[start_idx:]
+    
+    # 실행 인자 추가
+    if run_args:
+        args_str = " ".join([f"--{key} {value}" for key, value in run_args.items()])
+        run_command = f"{body_lines[-1].strip()} {args_str}\n"
+    else:
+        run_command = ""
 
     # 최종 구성
     with open(output_path, 'w') as f:
@@ -113,9 +121,10 @@ def generate_sh_with_options(original_script, output_path, options_dict):
         for sb in sbatch_lines:
             f.write(sb + '\n')
         f.write('\n')
-        f.writelines(body_lines)
+        f.writelines(body_lines[:-1])
+        f.write(run_command)
         
-def run_batch(script_path, save_dir, sbatch_options=None, max_retries=3, wait_interval=10, verbose=True):
+def run_batch(script_path, save_dir, sbatch_options=None, run_args=None, max_retries=3, wait_interval=10, verbose=True):
     """
     작업 제출 후 완료까지 대기하며, 실패 시 재시도. save_dir이 지정되면 해당 디렉토리에 스크립트 및 로그 저장.
     
@@ -123,6 +132,7 @@ def run_batch(script_path, save_dir, sbatch_options=None, max_retries=3, wait_in
         script_path (str): 실행할 .sh 스크립트 경로
         save_dir (str): 저장 디렉토리 경로
         sbatch_options (dict): sbatch 옵션 딕셔너리
+        run_args (dict): 실행 시 추가 인자 (예: {"gpu": "0", "batch_size": "32"})
         max_retries (int): 최대 재시도 횟수
         wait_interval (int): 상태 확인 주기 (초)  
         verbose (bool): 상태 출력 여부
@@ -131,13 +141,13 @@ def run_batch(script_path, save_dir, sbatch_options=None, max_retries=3, wait_in
     os.makedirs(save_dir, exist_ok=True)
 
     # 로그 경로도 save_dir로 설정
-    log_path = os.path.join(save_dir, "%A.log")
+    log_path = os.path.join(save_dir, "%A_%a.log")
     sbatch_options["output"] = log_path
 
     # 새로운 .sh 파일 생성
     script_name = os.path.basename(script_path)
     new_script_path = os.path.join(save_dir, script_name)
-    generate_sh_with_options(script_path, new_script_path, sbatch_options)
+    generate_sh_with_options(script_path, new_script_path, sbatch_options, run_args)
     script_path = new_script_path
 
     attempt = 0
@@ -167,7 +177,16 @@ def run_batch(script_path, save_dir, sbatch_options=None, max_retries=3, wait_in
 
     print("Maximum retry limit exceeded. Job failed.")
 
-def run_batch_with_function(save_dir, sbatch_options, module_name, function_name, function_args=None, python_path=None, max_retries=3, wait_interval=10, verbose=True):
+def run_batch_with_function(save_dir, 
+                            sbatch_options, 
+                            module_name, 
+                            function_name, 
+                            function_args=None, 
+                            python_path=None, 
+                            src_root=None, 
+                            max_retries=3, 
+                            wait_interval=10, 
+                            verbose=True):
     """
     특정 모듈의 함수를 인자와 함께 실행하는 sbatch 스크립트를 생성하고, 
     기존 run_batch를 호출하여 작업을 제출합니다.
@@ -179,6 +198,7 @@ def run_batch_with_function(save_dir, sbatch_options, module_name, function_name
         function_name (str): 실행할 함수 이름 (예: "my_function")
         function_args (dict or None): 함수 인자 (예: {"arg1": 123, "arg2": "'hello'"})
         python_path (str): 사용할 Python 인터프리터 경로
+        src_root (str): Python 경로에 추가할 루트 디렉토리
         max_retries (int): 최대 재시도 횟수
         wait_interval (int): 상태 확인 주기 (초)
         verbose (bool): 상태 출력 여부
@@ -195,15 +215,24 @@ def run_batch_with_function(save_dir, sbatch_options, module_name, function_name
         args_str = ", ".join([f"{k}={v}" for k, v in function_args.items()])
     else:
         args_str = ""
+    
+    # Python 코드 실행 라인 구성
+    if src_root:
+        # sys.path.append를 추가
+        call_str = (
+            f"import sys; sys.path.append('{src_root}'); "
+            f"from {module_name} import {function_name}; {function_name}({args_str})"
+        )
+    else:
+        # 기본 함수 호출
+        call_str = f"from {module_name} import {function_name}; {function_name}({args_str})"
 
     # 원본 스크립트 파일 생성 (함수 호출 코드만 포함)
     original_script_path = os.path.join(save_dir, f"run_{function_name}.sh")
     with open(original_script_path, "w") as f:
         f.write("#!/bin/bash\n")
-        # 함수 호출 문자열
-        call_str = f"{function_name}({args_str})"
         # Python 코드 실행 라인
-        f.write(f"{python_path} -c \"from {module_name} import {function_name}; {call_str}\"\n")
+        f.write(f"{python_path} -c \"{call_str}\"\n")
 
     # 쉘 스크립트가 실행될 수 있도록 실행 권한(755) 부여
     os.chmod(original_script_path, 0o755)
